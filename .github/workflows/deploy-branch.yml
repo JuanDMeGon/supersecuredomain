@@ -1,0 +1,39 @@
+name: Deploy branch
+
+# Static site: no tests, so every push to master moves the "deploy" branch, which the server
+# deploys (server-stack, docs/migration-plan.md section 4).
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  # Moves the "deploy" branch to this commit. The server's deploy agent deploys whatever
+  # "deploy" points to, so only tested commits reach it. Fast-forward only: a slower run for an
+  # older commit cannot move "deploy" back over a newer one.
+  deploy-branch:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: deploy-branch
+      cancel-in-progress: false
+    steps:
+      - name: Move the deploy branch to this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/deploy" --silent 2> /dev/null; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/deploy" \
+              -f sha="$GITHUB_SHA" -F force=false --silent || {
+                echo "::error::deploy was not moved: $GITHUB_SHA does not descend from the current deploy commit"
+                exit 1
+              }
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/heads/deploy -f sha="$GITHUB_SHA" --silent
+          fi
+          echo "deploy now points to $GITHUB_SHA"
